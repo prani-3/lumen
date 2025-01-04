@@ -1,0 +1,76 @@
+CREATE TABLE Orders (
+    order_id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT,
+    supplier_id INT,
+    order_type ENUM('Stock In', 'Stock Out') NOT NULL,
+    quantity INT NOT NULL,
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    order_status ENUM('Pending', 'Completed', 'Cancelled') DEFAULT 'Pending',
+    FOREIGN KEY (product_id) REFERENCES Products(product_id),
+    FOREIGN KEY (supplier_id) REFERENCES Suppliers(supplier_id)
+);
+-- Notifications Table
+CREATE TABLE Notifications (
+    notification_id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT,
+    notification_type ENUM('Low Stock', 'Order Delay') NOT NULL,
+    notification_message TEXT,
+    notification_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status ENUM('Sent', 'Pending', 'Acknowledged') DEFAULT 'Pending',
+    FOREIGN KEY (product_id) REFERENCES Products(product_id)
+);
+DELIMITER $$
+
+CREATE TRIGGER LowStockAlert 
+AFTER UPDATE ON Products
+FOR EACH ROW
+BEGIN
+    -- Check if stock is below or equal to reorder point
+    IF NEW.stock_level <= NEW.reorder_point THEN
+        -- Insert notification into Notifications table
+        INSERT INTO Notifications (product_id, notification_type, notification_message)
+        VALUES (NEW.product_id, 'Low Stock', CONCAT('Alert: Low stock for product ', NEW.name, '. Stock level is ', NEW.stock_level, '.'));
+    END IF;
+END $$
+
+DELIMITER ;
+DELIMITER $$
+
+CREATE TRIGGER UpdateStockLevels
+AFTER INSERT ON Orders
+FOR EACH ROW
+BEGIN
+    -- Update product stock levels based on the order type
+    IF NEW.order_type = 'Stock In' THEN
+        UPDATE Products
+        SET stock_level = stock_level + NEW.quantity
+        WHERE product_id = NEW.product_id;
+    ELSEIF NEW.order_type = 'Stock Out' THEN
+        UPDATE Products
+        SET stock_level = stock_level - NEW.quantity
+        WHERE product_id = NEW.product_id;
+    END IF;
+    
+    -- Optionally, you could call the LowStockAlert trigger again to check for low stock after an update
+    -- It will be executed automatically due to the trigger
+END $$
+
+DELIMITER ;
+-- Get pending notifications
+SELECT * FROM Notifications WHERE status = 'Pending';
+
+-- Update notification status to Sent
+UPDATE Notifications
+SET status = 'Sent'
+WHERE notification_id = [notification_id];
+SELECT o.order_id, p.name AS product_name, s.name AS supplier_name, o.order_type, o.quantity, o.order_date, o.order_status
+FROM Orders o
+JOIN Products p ON o.product_id = p.product_id
+JOIN Suppliers s ON o.supplier_id = s.supplier_id;
+SELECT p.name, p.stock_level, p.reorder_point
+FROM Products p
+WHERE p.stock_level <= p.reorder_point;
+SELECT n.notification_id, p.name AS product_name, n.notification_message, n.notification_date
+FROM Notifications n
+JOIN Products p ON n.product_id = p.product_id
+WHERE n.status = 'Pending';
